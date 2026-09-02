@@ -1,7 +1,8 @@
 import { DateTime } from "luxon";
+import { calculateEndDateWithOperatingHours, nextOperatingInstant } from "../utils/date-utils.js";
 import { validateSchedule } from "./constraint-checker.js";
 import { buildDependencyGraph, topologicalSort } from "./dependency-graph.js";
-import type { ReflowInput, ReflowResult, ScheduleChange, SettlementTask } from "./types.js";
+import type { OperatingHoursWindow, ReflowInput, ReflowResult, ScheduleChange, SettlementTask } from "./types.js";
 
 interface BusyInterval {
   start: DateTime;
@@ -15,17 +16,17 @@ interface BusyInterval {
  * channels, and trade orders, and produces a valid, constraint-respecting
  * schedule.
  *
- * @upgrade Phase 4: this currently treats every channel as open 24/7 (no
- * operating hours, no blackout windows) — end = start + durationMinutes on a
- * continuous timeline. Phase 4 swaps that for
- * calculateEndDateWithOperatingHours() from date-utils.ts, and Phase 4/5 also
- * feeds blackout windows into the channel busy-interval list below.
+ * @upgrade Phase 5: blackout windows aren't factored in yet — they'll plug
+ * into the same channelBusy list as regulatory holds do below (blocked time
+ * with no owning task), since from the placement search's point of view a
+ * blackout is just more "already booked" time on the channel.
  */
 export class ReflowService {
   reflow(input: ReflowInput): ReflowResult {
-    const { settlementTasks } = input;
+    const { settlementTasks, settlementChannels } = input;
     const graph = buildDependencyGraph(settlementTasks);
     const tasksById = graph.tasksById;
+    const channelsById = new Map(settlementChannels.map((channel) => [channel.docId, channel]));
 
     const processingOrder = topologicalSort(graph);
 
@@ -54,12 +55,23 @@ export class ReflowService {
         continue;
       }
 
+      const channel = channelsById.get(task.data.settlementChannelId);
+      if (!channel) {
+        throw new Error(
+          `Task ${task.data.taskReference} references unknown settlement channel id "${task.data.settlementChannelId}".`,
+        );
+      }
+
       const depFloor = latestDependencyEnd(task, newTimesById, tasksById) ?? originalStart;
       const earliestStart = depFloor > originalStart ? depFloor : originalStart;
 
       const busy = channelBusy.get(task.data.settlementChannelId) ?? [];
-      const { start: newStart, blockedBy } = findEarliestSlot(busy, earliestStart, task.data.durationMinutes);
-      const newEnd = newStart.plus({ minutes: task.data.durationMinutes });
+      const {
+        start: newStart,
+        end: newEnd,
+        blockedBy,
+        pausedForOperatingHours,
+      } = findEarliestAvailableSlot(busy, earliestStart, task.data.durationMinutes, channel.data.operatingHours);
 
       insertSorted(channelBusy, task.data.settlementChannelId, {
         start: newStart,
@@ -81,7 +93,14 @@ export class ReflowService {
       updatedTasks.push(updatedTask);
 
       const deltaMinutes = newStart.diff(originalStart, "minutes").minutes;
-      if (deltaMinutes !== 0) {
+      // The end can move even when the start doesn't: a task starting right
+      // before close still has its completion pushed to the next window, so
+      // "did anything change" has to compare both, not just the start delta.
+      const spannedOperatingHoursPause = newEnd.diff(newStart, "minutes").minutes > task.data.durationMinutes;
+      const startChanged = !newStart.equals(originalStart);
+      const endChanged = !newEnd.equals(originalEnd);
+
+      if (startChanged || endChanged) {
         changes.push({
           taskId: task.docId,
           taskReference: task.data.taskReference,
@@ -90,7 +109,7 @@ export class ReflowService {
           newStartDate: updatedTask.data.startDate,
           newEndDate: updatedTask.data.endDate,
           deltaMinutes,
-          reason: buildReason({ depFloor, originalStart, blockedBy }),
+          reason: buildReason({ depFloor, originalStart, blockedBy, pausedForOperatingHours, spannedOperatingHoursPause }),
         });
       }
     }
@@ -180,37 +199,60 @@ function assertHoldDependenciesSatisfied(
   }
 }
 
+const MAX_PLACEMENT_ITERATIONS = 1000;
+
 /**
- * Finds the first slot of at least `durationMinutes` on a channel at or after
- * `earliestStart`, skipping past any already-booked interval. Busy intervals
- * are kept sorted, so a single forward scan suffices.
+ * Finds the first slot of at least `durationMinutes` of *operating* time on a
+ * channel at or after `earliestStart`, respecting both the channel's
+ * operating hours and its already-booked intervals.
+ *
+ * These two constraints interact: jumping past a channel conflict can land
+ * outside operating hours, and snapping into the next operating window can
+ * land inside another booked interval. So this alternates between the two
+ * checks until a candidate start satisfies both simultaneously — pure
+ * "operating hours only" math lives in date-utils.ts; this is where it meets
+ * the channel's busy-interval list.
  */
-function findEarliestSlot(
+function findEarliestAvailableSlot(
   busy: BusyInterval[],
   earliestStart: DateTime,
   durationMinutes: number,
-): { start: DateTime; blockedBy: string | null } {
+  operatingHours: OperatingHoursWindow[],
+): { start: DateTime; end: DateTime; blockedBy: string | null; pausedForOperatingHours: boolean } {
   let candidateStart = earliestStart;
   let blockedBy: string | null = null;
+  let pausedForOperatingHours = false;
 
-  // `busy` is sorted ascending by start and (by construction) contains no
-  // overlapping intervals, so a single forward pass is enough: each time the
-  // candidate window collides with a booked interval, jump past it and keep
-  // scanning — we never need to re-check earlier intervals.
-  for (const interval of busy) {
-    const candidateEnd = candidateStart.plus({ minutes: durationMinutes });
-    const overlaps = interval.start < candidateEnd && candidateStart < interval.end;
-    if (overlaps) {
-      candidateStart = interval.end;
-      blockedBy = interval.taskReference;
+  for (let iteration = 0; iteration < MAX_PLACEMENT_ITERATIONS; iteration++) {
+    const snapped = nextOperatingInstant(candidateStart, operatingHours);
+    if (!snapped.equals(candidateStart)) {
+      candidateStart = snapped;
+      pausedForOperatingHours = true;
+      continue;
     }
+
+    const candidateEnd = calculateEndDateWithOperatingHours(candidateStart, durationMinutes, operatingHours);
+    const conflict = busy.find((interval) => interval.start < candidateEnd && candidateStart < interval.end);
+
+    if (!conflict) {
+      return { start: candidateStart, end: candidateEnd, blockedBy, pausedForOperatingHours };
+    }
+
+    candidateStart = conflict.end;
+    blockedBy = conflict.taskReference;
   }
 
-  return { start: candidateStart, blockedBy };
+  throw new Error("Could not find an available channel slot — this indicates a bug in constraint resolution.");
 }
 
-function buildReason(params: { depFloor: DateTime | null; originalStart: DateTime; blockedBy: string | null }): string {
-  const { depFloor, originalStart, blockedBy } = params;
+function buildReason(params: {
+  depFloor: DateTime | null;
+  originalStart: DateTime;
+  blockedBy: string | null;
+  pausedForOperatingHours: boolean;
+  spannedOperatingHoursPause: boolean;
+}): string {
+  const { depFloor, originalStart, blockedBy, pausedForOperatingHours, spannedOperatingHoursPause } = params;
   const parts: string[] = [];
 
   if (depFloor && depFloor > originalStart) {
@@ -218,6 +260,12 @@ function buildReason(params: { depFloor: DateTime | null; originalStart: DateTim
   }
   if (blockedBy) {
     parts.push(`shifted later to avoid a channel conflict with task ${blockedBy}`);
+  }
+  if (pausedForOperatingHours) {
+    parts.push("requested start fell outside the channel's operating hours, so processing was snapped to the next window");
+  }
+  if (spannedOperatingHoursPause) {
+    parts.push("processing did not fit before the channel closed, so it paused and resumed in the next operating window");
   }
   if (parts.length === 0) {
     parts.push("shifted to satisfy scheduling constraints");

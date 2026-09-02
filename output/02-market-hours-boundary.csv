@@ -1,0 +1,3 @@
+taskReference,taskType,channel,dependsOn,isRegulatoryHold,originalStart,originalEnd,newStart,newEnd,deltaMinutes,reason
+STL-301-FUNDXFER,fundTransfer,International Wire Desk,,no,2026-08-31T15:00:00.000Z,2026-08-31T17:00:00.000Z,2026-08-31T15:00:00.000Z,2026-09-01T09:00:00.000Z,0,"processing did not fit before the channel closed, so it paused and resumed in the next operating window"
+STL-302-DISBURSE,disbursement,International Wire Desk,STL-301-FUNDXFER,no,2026-08-31T17:00:00.000Z,2026-08-31T17:30:00.000Z,2026-09-01T09:00:00.000Z,2026-09-01T09:30:00.000Z,960,waited for an upstream dependency to complete at 2026-09-01T09:00:00.000Z

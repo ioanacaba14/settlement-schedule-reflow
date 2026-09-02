@@ -7,7 +7,13 @@
       "docType": "settlementChannel",
       "data": {
         "name": "Domestic Wire Desk",
-        "operatingHours": [{ "dayOfWeek": 3, "startHour": 8, "endHour": 16 }],
+        "operatingHours": [
+          { "dayOfWeek": 1, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 2, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 3, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 4, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 5, "startHour": 8, "endHour": 16 }
+        ],
         "blackoutWindows": []
       }
     }

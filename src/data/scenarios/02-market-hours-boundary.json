@@ -1,0 +1,65 @@
+{
+  "name": "Market Hours Boundary",
+  "description": "A fund transfer needs 120 minutes but only starts at 3PM on a channel that closes at 4PM — it processes 60 minutes, pauses overnight, and resumes at the next day's open (the exact example from the spec). A dependent disbursement then also has to wait for that resumed completion time.",
+  "settlementChannels": [
+    {
+      "docId": "channel-intl-wire-desk",
+      "docType": "settlementChannel",
+      "data": {
+        "name": "International Wire Desk",
+        "operatingHours": [
+          { "dayOfWeek": 1, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 2, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 3, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 4, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 5, "startHour": 8, "endHour": 16 }
+        ],
+        "blackoutWindows": []
+      }
+    }
+  ],
+  "tradeOrders": [
+    {
+      "docId": "trade-4",
+      "docType": "tradeOrder",
+      "data": {
+        "tradeOrderNumber": "TRD-20260831-040",
+        "instrumentId": "GBPUSD",
+        "quantity": 750000,
+        "settlementDate": "2026-09-01T23:59:59.000Z"
+      }
+    }
+  ],
+  "settlementTasks": [
+    {
+      "docId": "task-fundxfer-boundary",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-301-FUNDXFER",
+        "tradeOrderId": "trade-4",
+        "settlementChannelId": "channel-intl-wire-desk",
+        "startDate": "2026-08-31T15:00:00.000Z",
+        "endDate": "2026-08-31T17:00:00.000Z",
+        "durationMinutes": 120,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": [],
+        "taskType": "fundTransfer"
+      }
+    },
+    {
+      "docId": "task-disburse-boundary",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-302-DISBURSE",
+        "tradeOrderId": "trade-4",
+        "settlementChannelId": "channel-intl-wire-desk",
+        "startDate": "2026-08-31T17:00:00.000Z",
+        "endDate": "2026-08-31T17:30:00.000Z",
+        "durationMinutes": 30,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": ["task-fundxfer-boundary"],
+        "taskType": "disbursement"
+      }
+    }
+  ]
+}
