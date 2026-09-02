@@ -16,12 +16,45 @@ function windowsForDay(operatingHours: OperatingHoursWindow[], dayOfWeek: number
 }
 
 /**
+ * Validates each window's shape so a misconfigured channel fails loudly and
+ * clearly here, rather than surfacing later as a confusing "instant is not
+ * within any operating window" deep inside the placement search.
+ */
+function assertValidOperatingHours(operatingHours: OperatingHoursWindow[]): void {
+  for (const window of operatingHours) {
+    if (!Number.isInteger(window.dayOfWeek) || window.dayOfWeek < 0 || window.dayOfWeek > 6) {
+      throw new Error(`Invalid operating-hours window: dayOfWeek must be an integer 0-6, got ${window.dayOfWeek}.`);
+    }
+    if (
+      !Number.isInteger(window.startHour) ||
+      !Number.isInteger(window.endHour) ||
+      window.startHour < 0 ||
+      window.startHour > 23 ||
+      window.endHour < 0 ||
+      window.endHour > 23
+    ) {
+      throw new Error(
+        `Invalid operating-hours window for dayOfWeek ${window.dayOfWeek}: startHour/endHour must be integers ` +
+          `0-23, got ${window.startHour}-${window.endHour}.`,
+      );
+    }
+    if (window.startHour >= window.endHour) {
+      throw new Error(
+        `Invalid operating-hours window for dayOfWeek ${window.dayOfWeek}: startHour (${window.startHour}) must ` +
+          `be before endHour (${window.endHour}).`,
+      );
+    }
+  }
+}
+
+/**
  * True if `instant` falls inside one of the channel's operating windows.
  * Windows are half-open [startHour, endHour) — an instant exactly at
  * endHour:00 is outside the window (processing has already paused), matching
  * the spec's example of a task pausing exactly when the window closes.
  */
 export function isWithinOperatingHours(instant: DateTime, operatingHours: OperatingHoursWindow[]): boolean {
+  assertValidOperatingHours(operatingHours);
   const utc = instant.toUTC();
   const dayOfWeek = toSpecDayOfWeek(utc);
   return windowsForDay(operatingHours, dayOfWeek).some(
@@ -52,6 +85,7 @@ export function nextOperatingWindowStart(instant: DateTime, operatingHours: Oper
   if (operatingHours.length === 0) {
     throw new Error("Channel has no operating hours defined — cannot schedule any processing on it.");
   }
+  assertValidOperatingHours(operatingHours);
 
   const utc = instant.toUTC();
 
@@ -99,6 +133,10 @@ export function calculateEndDateWithOperatingHours(
   durationMinutes: number,
   operatingHours: OperatingHoursWindow[],
 ): DateTime {
+  if (durationMinutes < 0) {
+    throw new Error(`durationMinutes must be non-negative, got ${durationMinutes}.`);
+  }
+
   let remainingMinutes = durationMinutes;
   let current = nextOperatingInstant(startDate, operatingHours);
 
@@ -114,6 +152,6 @@ export function calculateEndDateWithOperatingHours(
     current = nextOperatingWindowStart(windowEnd, operatingHours);
   }
 
-  // Unreachable: the loop above always returns once remainingMinutes hits zero.
-  throw new Error("calculateEndDateWithOperatingHours failed to converge — this indicates a bug.");
+  // durationMinutes was 0: the task completes instantly at its (snapped) start.
+  return current;
 }
