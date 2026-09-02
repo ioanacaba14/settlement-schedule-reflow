@@ -1,0 +1,104 @@
+{
+  "name": "Complex Multi-Constraint (dependencies + channel conflict + regulatory hold)",
+  "description": "A dependency chain (margin -> fund transfer -> disbursement -> reconciliation) where the fund transfer is delayed AND an immovable regulatory hold sits on the same channel exactly where disbursement would otherwise land, forcing it — and everything chained after it — further out still.",
+  "settlementChannels": [
+    {
+      "docId": "s3-channel-wire-desk",
+      "docType": "settlementChannel",
+      "data": {
+        "name": "Domestic Wire Desk",
+        "operatingHours": [{ "dayOfWeek": 3, "startHour": 8, "endHour": 16 }],
+        "blackoutWindows": []
+      }
+    }
+  ],
+  "tradeOrders": [
+    {
+      "docId": "trade-3",
+      "docType": "tradeOrder",
+      "data": {
+        "tradeOrderNumber": "TRD-20260902-030",
+        "instrumentId": "US912829",
+        "quantity": 500000,
+        "settlementDate": "2026-09-02T23:59:59.000Z"
+      }
+    }
+  ],
+  "settlementTasks": [
+    {
+      "docId": "s3-margin",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-201-MARGIN",
+        "tradeOrderId": "trade-3",
+        "settlementChannelId": "s3-channel-wire-desk",
+        "startDate": "2026-09-02T08:00:00.000Z",
+        "endDate": "2026-09-02T08:30:00.000Z",
+        "durationMinutes": 30,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": [],
+        "taskType": "marginCheck"
+      }
+    },
+    {
+      "docId": "s3-fundxfer",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-202-FUNDXFER",
+        "tradeOrderId": "trade-3",
+        "settlementChannelId": "s3-channel-wire-desk",
+        "startDate": "2026-09-02T10:00:00.000Z",
+        "endDate": "2026-09-02T11:00:00.000Z",
+        "durationMinutes": 60,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": ["s3-margin"],
+        "taskType": "fundTransfer"
+      }
+    },
+    {
+      "docId": "s3-hold",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-203-HOLD",
+        "tradeOrderId": "trade-3",
+        "settlementChannelId": "s3-channel-wire-desk",
+        "startDate": "2026-09-02T11:00:00.000Z",
+        "endDate": "2026-09-02T11:20:00.000Z",
+        "durationMinutes": 20,
+        "isRegulatoryHold": true,
+        "dependsOnTaskIds": [],
+        "taskType": "regulatoryHold"
+      }
+    },
+    {
+      "docId": "s3-disburse",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-204-DISBURSE",
+        "tradeOrderId": "trade-3",
+        "settlementChannelId": "s3-channel-wire-desk",
+        "startDate": "2026-09-02T08:30:00.000Z",
+        "endDate": "2026-09-02T09:00:00.000Z",
+        "durationMinutes": 30,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": ["s3-fundxfer"],
+        "taskType": "disbursement"
+      }
+    },
+    {
+      "docId": "s3-recon",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-205-RECON",
+        "tradeOrderId": "trade-3",
+        "settlementChannelId": "s3-channel-wire-desk",
+        "startDate": "2026-09-02T09:00:00.000Z",
+        "endDate": "2026-09-02T09:15:00.000Z",
+        "durationMinutes": 15,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": ["s3-disburse"],
+        "taskType": "reconciliation"
+      }
+    }
+  ]
+}

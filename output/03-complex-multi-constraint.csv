@@ -1,0 +1,6 @@
+taskReference,taskType,channel,dependsOn,isRegulatoryHold,originalStart,originalEnd,newStart,newEnd,deltaMinutes,reason
+STL-201-MARGIN,marginCheck,Domestic Wire Desk,,no,2026-09-02T08:00:00.000Z,2026-09-02T08:30:00.000Z,2026-09-02T08:00:00.000Z,2026-09-02T08:30:00.000Z,0,No change — already satisfies all constraints
+STL-202-FUNDXFER,fundTransfer,Domestic Wire Desk,STL-201-MARGIN,no,2026-09-02T10:00:00.000Z,2026-09-02T11:00:00.000Z,2026-09-02T10:00:00.000Z,2026-09-02T11:00:00.000Z,0,No change — already satisfies all constraints
+STL-203-HOLD,regulatoryHold,Domestic Wire Desk,,yes,2026-09-02T11:00:00.000Z,2026-09-02T11:20:00.000Z,2026-09-02T11:00:00.000Z,2026-09-02T11:20:00.000Z,0,"Regulatory hold — fixed, cannot be rescheduled"
+STL-204-DISBURSE,disbursement,Domestic Wire Desk,STL-202-FUNDXFER,no,2026-09-02T08:30:00.000Z,2026-09-02T09:00:00.000Z,2026-09-02T11:20:00.000Z,2026-09-02T11:50:00.000Z,170,waited for an upstream dependency to complete at 2026-09-02T11:00:00.000Z; shifted later to avoid a channel conflict with task STL-203-HOLD
+STL-205-RECON,reconciliation,Domestic Wire Desk,STL-204-DISBURSE,no,2026-09-02T09:00:00.000Z,2026-09-02T09:15:00.000Z,2026-09-02T11:50:00.000Z,2026-09-02T12:05:00.000Z,170,waited for an upstream dependency to complete at 2026-09-02T11:50:00.000Z

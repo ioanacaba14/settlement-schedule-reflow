@@ -1,0 +1,74 @@
+{
+  "name": "Channel Conflict Resolution",
+  "description": "Three independent tasks (no dependency relationship between them) all originally overlap on the same channel. Resolved purely by the earliest-original-start tie-break rule, cascading each later task past the one before it.",
+  "settlementChannels": [
+    {
+      "docId": "channel-fx-desk",
+      "docType": "settlementChannel",
+      "data": {
+        "name": "FX Settlement",
+        "operatingHours": [{ "dayOfWeek": 2, "startHour": 8, "endHour": 16 }],
+        "blackoutWindows": []
+      }
+    }
+  ],
+  "tradeOrders": [
+    {
+      "docId": "trade-2",
+      "docType": "tradeOrder",
+      "data": {
+        "tradeOrderNumber": "TRD-20260901-010",
+        "instrumentId": "EURUSD",
+        "quantity": 2500000,
+        "settlementDate": "2026-09-01T23:59:59.000Z"
+      }
+    }
+  ],
+  "settlementTasks": [
+    {
+      "docId": "task-compliance",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-101-COMPLY",
+        "tradeOrderId": "trade-2",
+        "settlementChannelId": "channel-fx-desk",
+        "startDate": "2026-09-01T09:00:00.000Z",
+        "endDate": "2026-09-01T09:20:00.000Z",
+        "durationMinutes": 20,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": [],
+        "taskType": "complianceScreen"
+      }
+    },
+    {
+      "docId": "task-margin-2",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-102-MARGIN",
+        "tradeOrderId": "trade-2",
+        "settlementChannelId": "channel-fx-desk",
+        "startDate": "2026-09-01T09:10:00.000Z",
+        "endDate": "2026-09-01T09:40:00.000Z",
+        "durationMinutes": 30,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": [],
+        "taskType": "marginCheck"
+      }
+    },
+    {
+      "docId": "task-recon-2",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-103-RECON",
+        "tradeOrderId": "trade-2",
+        "settlementChannelId": "channel-fx-desk",
+        "startDate": "2026-09-01T09:15:00.000Z",
+        "endDate": "2026-09-01T09:30:00.000Z",
+        "durationMinutes": 15,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": [],
+        "taskType": "reconciliation"
+      }
+    }
+  ]
+}

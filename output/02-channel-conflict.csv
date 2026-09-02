@@ -1,0 +1,4 @@
+taskReference,taskType,channel,dependsOn,isRegulatoryHold,originalStart,originalEnd,newStart,newEnd,deltaMinutes,reason
+STL-101-COMPLY,complianceScreen,FX Settlement,,no,2026-09-01T09:00:00.000Z,2026-09-01T09:20:00.000Z,2026-09-01T09:00:00.000Z,2026-09-01T09:20:00.000Z,0,No change — already satisfies all constraints
+STL-102-MARGIN,marginCheck,FX Settlement,,no,2026-09-01T09:10:00.000Z,2026-09-01T09:40:00.000Z,2026-09-01T09:20:00.000Z,2026-09-01T09:50:00.000Z,10,shifted later to avoid a channel conflict with task STL-101-COMPLY
+STL-103-RECON,reconciliation,FX Settlement,,no,2026-09-01T09:15:00.000Z,2026-09-01T09:30:00.000Z,2026-09-01T09:50:00.000Z,2026-09-01T10:05:00.000Z,35,shifted later to avoid a channel conflict with task STL-102-MARGIN

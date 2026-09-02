@@ -1,0 +1,89 @@
+{
+  "name": "Delay Cascade",
+  "description": "A counterparty's fund transfer arrives late. The downstream disbursement (still holding its pre-disruption time) must wait for it, which in turn bumps an unrelated reconciliation task off the same channel.",
+  "settlementChannels": [
+    {
+      "docId": "channel-wire-desk",
+      "docType": "settlementChannel",
+      "data": {
+        "name": "Domestic Wire Desk",
+        "operatingHours": [{ "dayOfWeek": 1, "startHour": 8, "endHour": 16 }],
+        "blackoutWindows": []
+      }
+    }
+  ],
+  "tradeOrders": [
+    {
+      "docId": "trade-1",
+      "docType": "tradeOrder",
+      "data": {
+        "tradeOrderNumber": "TRD-20260831-001",
+        "instrumentId": "US912828",
+        "quantity": 1000000,
+        "settlementDate": "2026-08-31T23:59:59.000Z"
+      }
+    }
+  ],
+  "settlementTasks": [
+    {
+      "docId": "task-margin-check",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-001-MARGIN",
+        "tradeOrderId": "trade-1",
+        "settlementChannelId": "channel-wire-desk",
+        "startDate": "2026-08-31T08:00:00.000Z",
+        "endDate": "2026-08-31T08:30:00.000Z",
+        "durationMinutes": 30,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": [],
+        "taskType": "marginCheck"
+      }
+    },
+    {
+      "docId": "task-fund-transfer",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-002-FUNDXFER",
+        "tradeOrderId": "trade-1",
+        "settlementChannelId": "channel-wire-desk",
+        "startDate": "2026-08-31T10:00:00.000Z",
+        "endDate": "2026-08-31T11:00:00.000Z",
+        "durationMinutes": 60,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": ["task-margin-check"],
+        "taskType": "fundTransfer"
+      }
+    },
+    {
+      "docId": "task-disbursement",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-003-DISBURSE",
+        "tradeOrderId": "trade-1",
+        "settlementChannelId": "channel-wire-desk",
+        "startDate": "2026-08-31T08:30:00.000Z",
+        "endDate": "2026-08-31T09:00:00.000Z",
+        "durationMinutes": 30,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": ["task-fund-transfer"],
+        "taskType": "disbursement"
+      }
+    },
+    {
+      "docId": "task-reconciliation",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-004-RECON",
+        "tradeOrderId": "trade-1",
+        "settlementChannelId": "channel-wire-desk",
+        "startDate": "2026-08-31T11:00:00.000Z",
+        "endDate": "2026-08-31T11:15:00.000Z",
+        "durationMinutes": 15,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": [],
+        "taskType": "reconciliation"
+      }
+    }
+  ]
+}

@@ -1,7 +1,16 @@
-import { ReflowService } from "./reflow/reflow.service.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { runAllScenarios } from "./scenario-runner.js";
 
-// @upgrade Phase 5: load sample scenario data and print before/after schedules here.
-const reflowService = new ReflowService();
-void reflowService;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const scenariosDir = path.join(__dirname, "data", "scenarios");
+const outputDir = path.join(__dirname, "..", "output");
 
-console.log("Settlement schedule reflow — scaffolding in place. Scenarios coming in a later phase.");
+const results = runAllScenarios(scenariosDir, outputDir);
+
+for (const result of results) {
+  console.log(`\n=== ${result.scenarioName} ===`);
+  console.log(result.description);
+  console.log(`Rescheduled ${result.changedCount} of ${result.totalCount} task(s).`);
+  console.log(`CSV: output/${result.fileName.replace(/\.json$/, ".csv")}`);
+}
