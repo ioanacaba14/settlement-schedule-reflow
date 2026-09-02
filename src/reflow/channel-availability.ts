@@ -44,13 +44,18 @@ export class ChannelAvailability {
    * that channel. Used for blackout windows and regulatory holds — both
    * immovable, so an overlap here means the schedule is unsatisfiable rather
    * than something to route around.
+   *
+   * Uses the *direct* overlap, not the merged-run version `findConflict`
+   * uses: this is a diagnostic ("what does the new interval actually
+   * overlap?"), and naming the last booking in an unrelated touching run
+   * would blame something the new interval never even overlaps.
    */
   registerFixed(channelId: string, interval: BusyInterval, describeConflict: (existing: BusyInterval) => string): void {
     const busy = this.busyFor(channelId);
     const index = insertionIndex(busy, interval.start.toMillis());
-    const conflict = findMergedConflict(busy, index, interval.start, interval.end);
+    const conflict = findDirectOverlap(busy, index, interval.start, interval.end);
     if (conflict) {
-      throw new Error(describeConflict(conflict));
+      throw new Error(describeConflict(conflict.interval));
     }
     busy.splice(index, 0, interval);
   }
@@ -92,11 +97,31 @@ function insertionIndex(busy: BusyInterval[], startMillis: number): number {
 }
 
 /**
- * Finds the first interval (if any) overlapping `[start, end)` — only the
- * neighbor just before `index` and the one at `index` can possibly be it,
- * since `busy` is sorted ascending by start with no overlaps among its own
- * entries — then merges forward through every subsequent interval that
- * touches or overlaps the growing reach, in one pass.
+ * Finds the first interval (if any) directly overlapping `[start, end)`,
+ * along with its index — only the neighbor just before `index` and the one
+ * at `index` can possibly be it, since `busy` is sorted ascending by start
+ * with no overlaps among its own entries.
+ */
+function findDirectOverlap(
+  busy: BusyInterval[],
+  index: number,
+  start: DateTime,
+  end: DateTime,
+): { interval: BusyInterval; index: number } | null {
+  const startMillis = start.toMillis();
+  const endMillis = end.toMillis();
+  for (const candidateIndex of [index - 1, index]) {
+    const candidate = busy[candidateIndex];
+    if (candidate && candidate.start.toMillis() < endMillis && startMillis < candidate.end.toMillis()) {
+      return { interval: candidate, index: candidateIndex };
+    }
+  }
+  return null;
+}
+
+/**
+ * Like `findDirectOverlap`, but merges forward through every subsequent
+ * interval that touches or overlaps the growing reach, in one pass.
  *
  * Returns a synthetic interval spanning the whole merged run, labeled with
  * the *last* booking in it (not the first): non-overlapping intervals sorted
@@ -106,26 +131,16 @@ function insertionIndex(busy: BusyInterval[], startMillis: number): number {
  * not just the one that started the cascade.
  */
 function findMergedConflict(busy: BusyInterval[], index: number, start: DateTime, end: DateTime): BusyInterval | null {
-  const startMillis = start.toMillis();
-  const endMillis = end.toMillis();
+  const first = findDirectOverlap(busy, index, start, end);
+  if (!first) return null;
 
-  let firstConflictIndex = -1;
-  for (const candidateIndex of [index - 1, index]) {
-    const candidate = busy[candidateIndex];
-    if (candidate && candidate.start.toMillis() < endMillis && startMillis < candidate.end.toMillis()) {
-      firstConflictIndex = candidateIndex;
-      break;
-    }
-  }
-  if (firstConflictIndex === -1) return null;
-
-  const runStart = busy[firstConflictIndex]!.start;
-  let last = busy[firstConflictIndex]!;
+  const runStart = first.interval.start;
+  let last = first.interval;
 
   // Touching (not just overlapping) counts as part of the same run: a
   // positive-duration candidate starting exactly where the merged run ends
   // would immediately conflict with an interval that starts right there too.
-  let i = firstConflictIndex + 1;
+  let i = first.index + 1;
   while (i < busy.length && busy[i]!.start.toMillis() <= last.end.toMillis()) {
     last = busy[i]!;
     i++;

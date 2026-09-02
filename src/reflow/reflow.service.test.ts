@@ -156,6 +156,18 @@ describe("ReflowService — channel conflicts", () => {
     );
   });
 
+  it("throws for a regulatory hold referencing an unknown settlement channel id (regression: holds used to skip this check)", () => {
+    const hold = makeTask({
+      docId: "hold",
+      taskReference: "HOLD",
+      isRegulatoryHold: true,
+      settlementChannelId: "ghost-channel",
+    });
+    expect(() => run({ settlementTasks: [hold], settlementChannels: [], tradeOrders: [] })).toThrow(
+      /unknown settlement channel id "ghost-channel"/,
+    );
+  });
+
   it("throws on duplicate channel docIds", () => {
     const channelA = makeChannel({ docId: "dup" });
     const channelB = makeChannel({ docId: "dup" });
@@ -388,6 +400,28 @@ describe("ReflowService — blackout windows", () => {
     });
     expect(() => run({ settlementTasks: [hold], settlementChannels: [channel], tradeOrders: [] })).toThrow(
       /HOLD overlaps with Blackout \(Maintenance\)/,
+    );
+  });
+
+  it("blames the blackout window it actually overlaps, not an unrelated touching one (regression)", () => {
+    // HOLD (09:05-09:07) only overlaps blackout A (09:00-09:10); the two
+    // blackouts merely touch at 09:10, they don't overlap each other or HOLD
+    // together. The error must name A, not B.
+    const channel = makeChannel({
+      blackoutWindows: [
+        { startDate: "2026-08-31T09:00:00.000Z", endDate: "2026-08-31T09:10:00.000Z", reason: "A" },
+        { startDate: "2026-08-31T09:10:00.000Z", endDate: "2026-08-31T09:20:00.000Z", reason: "B" },
+      ],
+    });
+    const hold = makeTask({
+      docId: "hold",
+      taskReference: "HOLD",
+      isRegulatoryHold: true,
+      startDate: "2026-08-31T09:05:00.000Z",
+      endDate: "2026-08-31T09:07:00.000Z",
+    });
+    expect(() => run({ settlementTasks: [hold], settlementChannels: [channel], tradeOrders: [] })).toThrow(
+      /HOLD overlaps with Blackout \(A\)/,
     );
   });
 

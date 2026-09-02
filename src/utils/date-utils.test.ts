@@ -61,6 +61,26 @@ describe("calculateEndDateWithOperatingHours", () => {
     );
   });
 
+  it("rejects two overlapping windows on the same day (regression: used to silently jump a week ahead instead of using the wider window)", () => {
+    const overlapping = [
+      { dayOfWeek: 1, startHour: 8, endHour: 16 },
+      { dayOfWeek: 1, startHour: 10, endHour: 18 },
+    ];
+    expect(() => calculateEndDateWithOperatingHours(utc("2026-08-31T11:00:00.000Z"), 360, overlapping)).toThrow(
+      /two windows for dayOfWeek 1 overlap/,
+    );
+  });
+
+  it("allows two non-overlapping windows on the same day (e.g. a lunch-break split)", () => {
+    const splitDay = [
+      { dayOfWeek: 1, startHour: 8, endHour: 12 },
+      { dayOfWeek: 1, startHour: 13, endHour: 17 },
+    ];
+    const end = calculateEndDateWithOperatingHours(utc("2026-08-31T11:00:00.000Z"), 120, splitDay);
+    // 60 min left in the morning window (11-12), pauses over lunch, resumes 13:00, needs 60 more -> 14:00.
+    expect(end.toUTC().toISO()).toBe("2026-08-31T14:00:00.000Z");
+  });
+
   it("rejects an out-of-range dayOfWeek", () => {
     const badWindow = [{ dayOfWeek: 7, startHour: 8, endHour: 16 }];
     expect(() => calculateEndDateWithOperatingHours(utc("2026-08-31T10:00:00.000Z"), 30, badWindow)).toThrow(

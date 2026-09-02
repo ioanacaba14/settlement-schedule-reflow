@@ -45,6 +45,26 @@ function assertValidOperatingHours(operatingHours: OperatingHoursWindow[]): void
       );
     }
   }
+
+  // Two overlapping windows on the same day make "which window does this
+  // instant belong to" ambiguous: isWithinOperatingHours (which checks *any*
+  // match) and currentWindowEnd (which picks whichever matches first) can
+  // silently disagree about how much time is actually left before close —
+  // in the worst case, using the earlier-ending window's close time to
+  // compute the next resume point can jump the schedule days or weeks
+  // further than it should.
+  for (let i = 0; i < operatingHours.length; i++) {
+    for (let j = i + 1; j < operatingHours.length; j++) {
+      const a = operatingHours[i]!;
+      const b = operatingHours[j]!;
+      if (a.dayOfWeek === b.dayOfWeek && a.startHour < b.endHour && b.startHour < a.endHour) {
+        throw new Error(
+          `Invalid operating-hours: two windows for dayOfWeek ${a.dayOfWeek} overlap ` +
+            `(${a.startHour}-${a.endHour} and ${b.startHour}-${b.endHour}).`,
+        );
+      }
+    }
+  }
 }
 
 /**

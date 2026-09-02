@@ -25,6 +25,18 @@ export class ReflowService {
       throw new Error(`Duplicate channel docId(s) found: ${[...duplicates].join(", ")} — channel ids must be unique.`);
     }
 
+    // Validated up front for every task (including regulatory holds — a hold
+    // otherwise skips the per-task channel lookup below entirely, since it
+    // never reaches the movable-task branch that does it) rather than only
+    // checking once we get to placing a movable task.
+    for (const task of settlementTasks) {
+      if (!channelsById.has(task.data.settlementChannelId)) {
+        throw new Error(
+          `Task ${task.data.taskReference} references unknown settlement channel id "${task.data.settlementChannelId}".`,
+        );
+      }
+    }
+
     const processingOrder = topologicalSort(graph);
 
     // Blackout windows and regulatory holds are both immovable, so their
@@ -58,12 +70,8 @@ export class ReflowService {
         continue;
       }
 
-      const channel = channelsById.get(task.data.settlementChannelId);
-      if (!channel) {
-        throw new Error(
-          `Task ${task.data.taskReference} references unknown settlement channel id "${task.data.settlementChannelId}".`,
-        );
-      }
+      // Existence already validated up front; every task's channel is guaranteed to be in the map here.
+      const channel = channelsById.get(task.data.settlementChannelId)!;
 
       const depFloor = latestDependencyEnd(task, newTimesById, tasksById) ?? originalStart;
       const earliestStart = depFloor > originalStart ? depFloor : originalStart;
