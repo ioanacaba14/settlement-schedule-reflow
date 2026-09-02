@@ -1,7 +1,7 @@
 {
   "name": "settlement-schedule-reflow",
   "version": "1.0.0",
-  "description": "Settlement schedule reflow algorithm for the Capital33 technical test",
+  "description": "Settlement schedule reflow algorithm implementation in TypeScript.",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
