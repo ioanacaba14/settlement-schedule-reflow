@@ -2,8 +2,6 @@
 
 A settlement schedule reflow engine for a financial operations platform: given a set of settlement tasks, settlement channels, and a disruption (a delayed trade, a channel outage, a regulatory hold), it recomputes a valid schedule that respects task dependencies, channel exclusivity, market operating hours, and blackout/maintenance windows — and explains exactly what moved and why.
 
-Built for the Capital33 technical test.
-
 ## Setup
 
 Requires Node.js 20+ (developed against Node 26) and npm.
