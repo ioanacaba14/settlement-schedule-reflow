@@ -155,6 +155,43 @@ describe("ReflowService — channel conflicts", () => {
       /unknown settlement channel id "ghost-channel"/,
     );
   });
+
+  it("throws on duplicate channel docIds", () => {
+    const channelA = makeChannel({ docId: "dup" });
+    const channelB = makeChannel({ docId: "dup" });
+    expect(() => run({ settlementTasks: [], settlementChannels: [channelA, channelB], tradeOrders: [] })).toThrow(
+      /Duplicate channel docId\(s\) found: dup/,
+    );
+  });
+
+  it("resolves heavy contention (1,500 tasks wanting the exact same instant) without exceeding the old fixed iteration cap", () => {
+    // Regression: MAX_PLACEMENT_ITERATIONS used to be a flat 1000, so the
+    // ~1499th task here (needing that many sequential jumps past everyone
+    // ahead of it) would have thrown a false "no available slot" error.
+    const channel = makeChannel({
+      operatingHours: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, startHour: 0, endHour: 23 })),
+    });
+    const tasks = Array.from({ length: 1500 }, (_, i) =>
+      makeTask({
+        docId: `t${i}`,
+        taskReference: `T${String(i).padStart(4, "0")}`,
+        startDate: "2026-08-31T00:00:00.000Z",
+        endDate: "2026-08-31T00:01:00.000Z",
+        durationMinutes: 1,
+      }),
+    );
+
+    const started = performance.now();
+    const result = run({ settlementTasks: tasks, settlementChannels: [channel], tradeOrders: [] });
+    const elapsedMs = performance.now() - started;
+
+    expect(result.updatedTasks).toHaveLength(1500);
+    expect(elapsedMs).toBeLessThan(2000);
+
+    const byRef = Object.fromEntries(result.updatedTasks.map((t) => [t.data.taskReference, t.data]));
+    expect(byRef.T0000?.startDate).toBe("2026-08-31T00:00:00.000Z"); // earliest reference wins the contested instant
+    expect(byRef.T0001?.startDate).toBe("2026-08-31T00:01:00.000Z"); // next one pushed by exactly 1 minute
+  });
 });
 
 describe("ReflowService — regulatory holds", () => {
@@ -217,6 +254,28 @@ describe("ReflowService — regulatory holds", () => {
     expect(() => run({ settlementTasks: [holdA, holdB], settlementChannels: [channel], tradeOrders: [] })).toThrow(
       /HOLD-B.*overlaps with HOLD-A/,
     );
+  });
+
+  it("throws when a regulatory hold depends on another hold whose fixed end is after its own fixed start", () => {
+    const channel = makeChannel();
+    const upstreamHold = makeTask({
+      docId: "upstream-hold",
+      taskReference: "UPSTREAM-HOLD",
+      isRegulatoryHold: true,
+      startDate: "2026-08-31T11:00:00.000Z",
+      endDate: "2026-08-31T11:30:00.000Z",
+    });
+    const downstreamHold = makeTask({
+      docId: "downstream-hold",
+      taskReference: "DOWNSTREAM-HOLD",
+      isRegulatoryHold: true,
+      dependsOnTaskIds: ["upstream-hold"],
+      startDate: "2026-08-31T10:00:00.000Z",
+      endDate: "2026-08-31T10:30:00.000Z",
+    });
+    expect(() =>
+      run({ settlementTasks: [upstreamHold, downstreamHold], settlementChannels: [channel], tradeOrders: [] }),
+    ).toThrow(/DOWNSTREAM-HOLD cannot be rescheduled/);
   });
 
   it("throws when a regulatory hold's dependency can't finish before its fixed start", () => {

@@ -1,22 +1,8 @@
 import { DateTime } from "luxon";
-import { calculateEndDateWithOperatingHours, nextOperatingInstant } from "../utils/date-utils.js";
+import { ChannelAvailability, findEarliestAvailableSlot, registerBlackoutWindows, registerHold } from "./channel-availability.js";
 import { validateSchedule } from "./constraint-checker.js";
 import { buildDependencyGraph, topologicalSort } from "./dependency-graph.js";
-import type {
-  OperatingHoursWindow,
-  ReflowInput,
-  ReflowResult,
-  ScheduleChange,
-  SettlementChannel,
-  SettlementTask,
-} from "./types.js";
-
-interface BusyInterval {
-  start: DateTime;
-  end: DateTime;
-  taskId: string;
-  taskReference: string;
-}
+import type { ReflowInput, ReflowResult, ScheduleChange, SettlementTask } from "./types.js";
 
 /**
  * Entry point for the reflow algorithm: takes the current settlement tasks,
@@ -29,6 +15,15 @@ export class ReflowService {
     const graph = buildDependencyGraph(settlementTasks);
     const tasksById = graph.tasksById;
     const channelsById = new Map(settlementChannels.map((channel) => [channel.docId, channel]));
+    if (channelsById.size !== settlementChannels.length) {
+      const seen = new Set<string>();
+      const duplicates = new Set<string>();
+      for (const channel of settlementChannels) {
+        if (seen.has(channel.docId)) duplicates.add(channel.docId);
+        seen.add(channel.docId);
+      }
+      throw new Error(`Duplicate channel docId(s) found: ${[...duplicates].join(", ")} — channel ids must be unique.`);
+    }
 
     const processingOrder = topologicalSort(graph);
 
@@ -38,13 +33,13 @@ export class ReflowService {
     // processing order. Blackouts go first: registering a hold checks for
     // overlap against whatever's already booked, so a hold landing on top of
     // a blackout is reported as exactly that conflict.
-    const channelBusy = new Map<string, BusyInterval[]>();
+    const availability = new ChannelAvailability();
     for (const channel of settlementChannels) {
-      registerBlackoutWindows(channel, channelBusy);
+      registerBlackoutWindows(channel, availability);
     }
     for (const task of processingOrder) {
       if (task.data.isRegulatoryHold) {
-        registerHold(task, channelBusy);
+        registerHold(task, availability);
       }
     }
 
@@ -73,15 +68,20 @@ export class ReflowService {
       const depFloor = latestDependencyEnd(task, newTimesById, tasksById) ?? originalStart;
       const earliestStart = depFloor > originalStart ? depFloor : originalStart;
 
-      const busy = channelBusy.get(task.data.settlementChannelId) ?? [];
       const {
         start: newStart,
         end: newEnd,
         blockedBy,
         pausedForOperatingHours,
-      } = findEarliestAvailableSlot(busy, earliestStart, task.data.durationMinutes, channel.data.operatingHours);
+      } = findEarliestAvailableSlot(
+        availability,
+        task.data.settlementChannelId,
+        earliestStart,
+        task.data.durationMinutes,
+        channel.data.operatingHours,
+      );
 
-      insertSorted(channelBusy, task.data.settlementChannelId, {
+      availability.registerPlacement(task.data.settlementChannelId, {
         start: newStart,
         end: newEnd,
         taskId: task.docId,
@@ -148,61 +148,6 @@ export class ReflowService {
   }
 }
 
-/**
- * Blackout windows block a channel the same way a regulatory hold does —
- * fixed, immovable time with no owning task — so they're registered into
- * the exact same channelBusy list. Everywhere downstream (conflict scanning,
- * the "blockedBy" reason) treats a blackout identically to any other booked
- * interval; only the label differs.
- */
-function registerBlackoutWindows(channel: SettlementChannel, channelBusy: Map<string, BusyInterval[]>): void {
-  channel.data.blackoutWindows.forEach((blackout, index) => {
-    const interval: BusyInterval = {
-      start: DateTime.fromISO(blackout.startDate),
-      end: DateTime.fromISO(blackout.endDate),
-      taskId: `blackout:${channel.docId}:${index}`,
-      taskReference: `Blackout (${blackout.reason ?? "unspecified reason"})`,
-    };
-
-    const existing = channelBusy.get(channel.docId) ?? [];
-    const overlapping = existing.find((busy) => interval.start < busy.end && busy.start < interval.end);
-    if (overlapping) {
-      throw new Error(
-        `Blackout window on channel "${channel.data.name}" (${interval.taskReference}) overlaps with ` +
-          `${overlapping.taskReference} — the channel's configuration is invalid.`,
-      );
-    }
-
-    insertSorted(channelBusy, channel.docId, interval);
-  });
-}
-
-function registerHold(task: SettlementTask, channelBusy: Map<string, BusyInterval[]>): void {
-  const interval: BusyInterval = {
-    start: DateTime.fromISO(task.data.startDate),
-    end: DateTime.fromISO(task.data.endDate),
-    taskId: task.docId,
-    taskReference: task.data.taskReference,
-  };
-
-  const existing = channelBusy.get(task.data.settlementChannelId) ?? [];
-  const overlapping = existing.find((busy) => interval.start < busy.end && busy.start < interval.end);
-  if (overlapping) {
-    throw new Error(
-      `Regulatory hold ${task.data.taskReference} overlaps with ${overlapping.taskReference} on the same channel — no valid schedule exists.`,
-    );
-  }
-
-  insertSorted(channelBusy, task.data.settlementChannelId, interval);
-}
-
-function insertSorted(channelBusy: Map<string, BusyInterval[]>, channelId: string, interval: BusyInterval): void {
-  const list = channelBusy.get(channelId) ?? [];
-  list.push(interval);
-  list.sort((a, b) => a.start.toMillis() - b.start.toMillis());
-  channelBusy.set(channelId, list);
-}
-
 function latestDependencyEnd(
   task: SettlementTask,
   newTimesById: Map<string, { start: DateTime; end: DateTime }>,
@@ -234,52 +179,6 @@ function assertHoldDependenciesSatisfied(
         `${depEnd.toUTC().toISO()}, after its fixed start of ${holdStart.toUTC().toISO()} — no valid schedule exists.`,
     );
   }
-}
-
-const MAX_PLACEMENT_ITERATIONS = 1000;
-
-/**
- * Finds the first slot of at least `durationMinutes` of *operating* time on a
- * channel at or after `earliestStart`, respecting both the channel's
- * operating hours and its already-booked intervals.
- *
- * These two constraints interact: jumping past a channel conflict can land
- * outside operating hours, and snapping into the next operating window can
- * land inside another booked interval. So this alternates between the two
- * checks until a candidate start satisfies both simultaneously — pure
- * "operating hours only" math lives in date-utils.ts; this is where it meets
- * the channel's busy-interval list.
- */
-function findEarliestAvailableSlot(
-  busy: BusyInterval[],
-  earliestStart: DateTime,
-  durationMinutes: number,
-  operatingHours: OperatingHoursWindow[],
-): { start: DateTime; end: DateTime; blockedBy: string | null; pausedForOperatingHours: boolean } {
-  let candidateStart = earliestStart;
-  let blockedBy: string | null = null;
-  let pausedForOperatingHours = false;
-
-  for (let iteration = 0; iteration < MAX_PLACEMENT_ITERATIONS; iteration++) {
-    const snapped = nextOperatingInstant(candidateStart, operatingHours);
-    if (!snapped.equals(candidateStart)) {
-      candidateStart = snapped;
-      pausedForOperatingHours = true;
-      continue;
-    }
-
-    const candidateEnd = calculateEndDateWithOperatingHours(candidateStart, durationMinutes, operatingHours);
-    const conflict = busy.find((interval) => interval.start < candidateEnd && candidateStart < interval.end);
-
-    if (!conflict) {
-      return { start: candidateStart, end: candidateEnd, blockedBy, pausedForOperatingHours };
-    }
-
-    candidateStart = conflict.end;
-    blockedBy = conflict.taskReference;
-  }
-
-  throw new Error("Could not find an available channel slot — this indicates a bug in constraint resolution.");
 }
 
 function buildReason(params: {

@@ -1,3 +1,4 @@
+import { DateTime } from "luxon";
 import { buildDependencyGraph, topologicalSort } from "./dependency-graph.js";
 import { makeTask } from "./test-fixtures.js";
 
@@ -56,5 +57,31 @@ describe("topologicalSort", () => {
     const a = makeTask({ docId: "a", taskReference: "A", dependsOnTaskIds: ["a"] });
     const graph = buildDependencyGraph([a]);
     expect(() => topologicalSort(graph)).toThrow(/Circular dependency detected/);
+  });
+
+  it("throws on duplicate task docIds", () => {
+    const a = makeTask({ docId: "dup", taskReference: "A" });
+    const b = makeTask({ docId: "dup", taskReference: "B" });
+    expect(() => buildDependencyGraph([a, b])).toThrow(/Duplicate task docId\(s\) found: dup/);
+  });
+
+  it("sorts 20,000 independent tasks well under a second (regression: the ready queue used to re-sort on every pop)", () => {
+    const tasks = Array.from({ length: 20_000 }, (_, i) =>
+      makeTask({
+        docId: `t${i}`,
+        taskReference: `T${i}`,
+        // Reverse chronological order so the heap can't coast on already-sorted input.
+        startDate: DateTime.fromISO("2026-08-31T08:00:00.000Z").plus({ minutes: 20_000 - i }).toISO()!,
+      }),
+    );
+    const graph = buildDependencyGraph(tasks);
+
+    const start = performance.now();
+    const order = topologicalSort(graph);
+    const elapsedMs = performance.now() - start;
+
+    expect(order).toHaveLength(20_000);
+    expect(order[0]?.data.taskReference).toBe("T19999"); // earliest startDate
+    expect(elapsedMs).toBeLessThan(1000);
   });
 });

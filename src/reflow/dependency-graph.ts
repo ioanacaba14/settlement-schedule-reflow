@@ -1,4 +1,5 @@
 import { DateTime } from "luxon";
+import { MinHeap } from "./min-heap.js";
 import type { SettlementTask } from "./types.js";
 
 export interface DependencyGraph {
@@ -15,6 +16,16 @@ export interface DependencyGraph {
  */
 export function buildDependencyGraph(tasks: SettlementTask[]): DependencyGraph {
   const tasksById = new Map(tasks.map((task) => [task.docId, task]));
+  if (tasksById.size !== tasks.length) {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const task of tasks) {
+      if (seen.has(task.docId)) duplicates.add(task.docId);
+      seen.add(task.docId);
+    }
+    throw new Error(`Duplicate task docId(s) found: ${[...duplicates].join(", ")} — task ids must be unique.`);
+  }
+
   const dependents = new Map<string, string[]>();
 
   for (const task of tasks) {
@@ -40,24 +51,34 @@ export function buildDependencyGraph(tasks: SettlementTask[]): DependencyGraph {
  * processed first — this is what implements the "earliest original start
  * wins" channel-contention tie-break rule, since processing order is exactly
  * the order tasks get to claim a channel slot in.
+ *
+ * The ready queue is a proper binary heap, not a re-sorted array: at 1M+
+ * tasks, re-sorting the whole ready queue on every pop turns an O(n log n)
+ * algorithm into an accidental O(n^2 log n) one. Each task's startDate is
+ * also parsed to millis exactly once up front rather than on every heap
+ * comparison.
  */
 export function topologicalSort(graph: DependencyGraph): SettlementTask[] {
   const inDegree = new Map<string, number>();
+  const startMillisById = new Map<string, number>();
   for (const task of graph.tasksById.values()) {
     inDegree.set(task.docId, task.data.dependsOnTaskIds.length);
+    startMillisById.set(task.docId, DateTime.fromISO(task.data.startDate).toMillis());
   }
 
   const byStartThenReference = (a: SettlementTask, b: SettlementTask): number => {
-    const byStart = DateTime.fromISO(a.data.startDate).toMillis() - DateTime.fromISO(b.data.startDate).toMillis();
+    const byStart = startMillisById.get(a.docId)! - startMillisById.get(b.docId)!;
     return byStart !== 0 ? byStart : a.data.taskReference.localeCompare(b.data.taskReference);
   };
 
-  const ready = [...graph.tasksById.values()].filter((task) => inDegree.get(task.docId) === 0);
-  const ordered: SettlementTask[] = [];
+  const ready = new MinHeap<SettlementTask>(byStartThenReference);
+  for (const task of graph.tasksById.values()) {
+    if (inDegree.get(task.docId) === 0) ready.push(task);
+  }
 
-  while (ready.length > 0) {
-    ready.sort(byStartThenReference);
-    const next = ready.shift()!;
+  const ordered: SettlementTask[] = [];
+  let next: SettlementTask | undefined;
+  while ((next = ready.pop()) !== undefined) {
     ordered.push(next);
 
     for (const dependentId of graph.dependents.get(next.docId) ?? []) {
