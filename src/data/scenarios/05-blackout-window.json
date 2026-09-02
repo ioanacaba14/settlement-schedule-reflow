@@ -1,0 +1,71 @@
+{
+  "name": "Blackout Window",
+  "description": "A channel has a scheduled maintenance blackout from 10-11AM. A task originally landing right in the middle of it must route around it entirely, which then cascades to a dependent task queued right behind it.",
+  "settlementChannels": [
+    {
+      "docId": "channel-custody-desk",
+      "docType": "settlementChannel",
+      "data": {
+        "name": "Custody Settlement",
+        "operatingHours": [
+          { "dayOfWeek": 1, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 2, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 3, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 4, "startHour": 8, "endHour": 16 },
+          { "dayOfWeek": 5, "startHour": 8, "endHour": 16 }
+        ],
+        "blackoutWindows": [
+          {
+            "startDate": "2026-08-31T10:00:00.000Z",
+            "endDate": "2026-08-31T11:00:00.000Z",
+            "reason": "Scheduled custody system maintenance"
+          }
+        ]
+      }
+    }
+  ],
+  "tradeOrders": [
+    {
+      "docId": "trade-5",
+      "docType": "tradeOrder",
+      "data": {
+        "tradeOrderNumber": "TRD-20260831-050",
+        "instrumentId": "US912830",
+        "quantity": 300000,
+        "settlementDate": "2026-08-31T23:59:59.000Z"
+      }
+    }
+  ],
+  "settlementTasks": [
+    {
+      "docId": "task-margin-blackout",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-401-MARGIN",
+        "tradeOrderId": "trade-5",
+        "settlementChannelId": "channel-custody-desk",
+        "startDate": "2026-08-31T10:00:00.000Z",
+        "endDate": "2026-08-31T10:30:00.000Z",
+        "durationMinutes": 30,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": [],
+        "taskType": "marginCheck"
+      }
+    },
+    {
+      "docId": "task-fundxfer-blackout",
+      "docType": "settlementTask",
+      "data": {
+        "taskReference": "STL-402-FUNDXFER",
+        "tradeOrderId": "trade-5",
+        "settlementChannelId": "channel-custody-desk",
+        "startDate": "2026-08-31T10:30:00.000Z",
+        "endDate": "2026-08-31T11:00:00.000Z",
+        "durationMinutes": 30,
+        "isRegulatoryHold": false,
+        "dependsOnTaskIds": ["task-margin-blackout"],
+        "taskType": "fundTransfer"
+      }
+    }
+  ]
+}

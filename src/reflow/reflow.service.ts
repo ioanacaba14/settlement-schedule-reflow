@@ -2,7 +2,14 @@ import { DateTime } from "luxon";
 import { calculateEndDateWithOperatingHours, nextOperatingInstant } from "../utils/date-utils.js";
 import { validateSchedule } from "./constraint-checker.js";
 import { buildDependencyGraph, topologicalSort } from "./dependency-graph.js";
-import type { OperatingHoursWindow, ReflowInput, ReflowResult, ScheduleChange, SettlementTask } from "./types.js";
+import type {
+  OperatingHoursWindow,
+  ReflowInput,
+  ReflowResult,
+  ScheduleChange,
+  SettlementChannel,
+  SettlementTask,
+} from "./types.js";
 
 interface BusyInterval {
   start: DateTime;
@@ -15,11 +22,6 @@ interface BusyInterval {
  * Entry point for the reflow algorithm: takes the current settlement tasks,
  * channels, and trade orders, and produces a valid, constraint-respecting
  * schedule.
- *
- * @upgrade Phase 5: blackout windows aren't factored in yet — they'll plug
- * into the same channelBusy list as regulatory holds do below (blocked time
- * with no owning task), since from the placement search's point of view a
- * blackout is just more "already booked" time on the channel.
  */
 export class ReflowService {
   reflow(input: ReflowInput): ReflowResult {
@@ -30,10 +32,16 @@ export class ReflowService {
 
     const processingOrder = topologicalSort(graph);
 
-    // Regulatory holds are immovable, so their windows are staked out on
-    // their channel before any movable task is placed — everything else has
-    // to route around them regardless of processing order.
+    // Blackout windows and regulatory holds are both immovable, so their
+    // windows are staked out on their channel before any movable task is
+    // placed — everything else has to route around them regardless of
+    // processing order. Blackouts go first: registering a hold checks for
+    // overlap against whatever's already booked, so a hold landing on top of
+    // a blackout is reported as exactly that conflict.
     const channelBusy = new Map<string, BusyInterval[]>();
+    for (const channel of settlementChannels) {
+      registerBlackoutWindows(channel, channelBusy);
+    }
     for (const task of processingOrder) {
       if (task.data.isRegulatoryHold) {
         registerHold(task, channelBusy);
@@ -117,7 +125,7 @@ export class ReflowService {
     // Defense in depth: the placement loop above should never produce an
     // invalid schedule, but re-validating independently catches algorithm
     // bugs instead of shipping a silently broken schedule.
-    const validation = validateSchedule(updatedTasks);
+    const validation = validateSchedule(updatedTasks, settlementChannels);
     if (!validation.valid) {
       const details = validation.issues.map((issue) => `${issue.taskReference}: ${issue.message}`).join("; ");
       throw new Error(`Reflow produced an invalid schedule: ${details}`);
@@ -140,6 +148,35 @@ export class ReflowService {
   }
 }
 
+/**
+ * Blackout windows block a channel the same way a regulatory hold does —
+ * fixed, immovable time with no owning task — so they're registered into
+ * the exact same channelBusy list. Everywhere downstream (conflict scanning,
+ * the "blockedBy" reason) treats a blackout identically to any other booked
+ * interval; only the label differs.
+ */
+function registerBlackoutWindows(channel: SettlementChannel, channelBusy: Map<string, BusyInterval[]>): void {
+  channel.data.blackoutWindows.forEach((blackout, index) => {
+    const interval: BusyInterval = {
+      start: DateTime.fromISO(blackout.startDate),
+      end: DateTime.fromISO(blackout.endDate),
+      taskId: `blackout:${channel.docId}:${index}`,
+      taskReference: `Blackout (${blackout.reason ?? "unspecified reason"})`,
+    };
+
+    const existing = channelBusy.get(channel.docId) ?? [];
+    const overlapping = existing.find((busy) => interval.start < busy.end && busy.start < interval.end);
+    if (overlapping) {
+      throw new Error(
+        `Blackout window on channel "${channel.data.name}" (${interval.taskReference}) overlaps with ` +
+          `${overlapping.taskReference} — the channel's configuration is invalid.`,
+      );
+    }
+
+    insertSorted(channelBusy, channel.docId, interval);
+  });
+}
+
 function registerHold(task: SettlementTask, channelBusy: Map<string, BusyInterval[]>): void {
   const interval: BusyInterval = {
     start: DateTime.fromISO(task.data.startDate),
@@ -152,7 +189,7 @@ function registerHold(task: SettlementTask, channelBusy: Map<string, BusyInterva
   const overlapping = existing.find((busy) => interval.start < busy.end && busy.start < interval.end);
   if (overlapping) {
     throw new Error(
-      `Regulatory hold ${task.data.taskReference} overlaps with immovable task ${overlapping.taskReference} on the same channel — no valid schedule exists.`,
+      `Regulatory hold ${task.data.taskReference} overlaps with ${overlapping.taskReference} on the same channel — no valid schedule exists.`,
     );
   }
 
@@ -259,7 +296,7 @@ function buildReason(params: {
     parts.push(`waited for an upstream dependency to complete at ${depFloor.toUTC().toISO()}`);
   }
   if (blockedBy) {
-    parts.push(`shifted later to avoid a channel conflict with task ${blockedBy}`);
+    parts.push(`shifted later to avoid a scheduling conflict with ${blockedBy}`);
   }
   if (pausedForOperatingHours) {
     parts.push("requested start fell outside the channel's operating hours, so processing was snapped to the next window");
